@@ -8,11 +8,14 @@ RUN echo "registry=https://registry.npmjs.org/" > .npmrc
 # Copy all files first
 COPY . .
 
-# Install dependencies
-RUN npm install --only=production
+# Install all dependencies (including dev dependencies for build)
+RUN npm install
 
 # Build the application for production
 RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
 
 # Install serve to run the built app
 RUN npm install -g serve
