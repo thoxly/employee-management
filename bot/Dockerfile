@@ -4,12 +4,16 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm ci --only=production
 
 COPY . .
 
-# Set environment variable for hot reload on Mac/Windows
-ENV CHOKIDAR_USEPOLLING=true
+# Expose port
+EXPOSE 3004
 
-# Start the application with nodemon for development
-CMD ["npm", "run", "dev"] 
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3004
+
+# Start the application in production mode
+CMD ["npm", "start"] 

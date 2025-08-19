@@ -1,4 +1,20 @@
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+      - bot
+    networks:
+      - production_network
+    restart: unless-stopped
+
   db:
     image: postgres:15-alpine
     environment:
@@ -21,8 +37,7 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - ./frontend/.env
-      - ./.env
+      - ./frontend/.env.production
     environment:
       - HOST=0.0.0.0
       - PORT=3000
@@ -32,7 +47,6 @@ services:
     networks:
       - production_network
     restart: unless-stopped
-    command: npm start
 
   backend:
     build:
@@ -41,8 +55,7 @@ services:
     ports:
       - "3001:3001"
     env_file:
-      - ./backend/.env
-      - ./.env
+      - ./backend/.env.production
     environment:
       - NODE_ENV=production
     depends_on:
@@ -50,7 +63,6 @@ services:
     networks:
       - production_network
     restart: unless-stopped
-    command: npm start
 
   bot:
     build:
@@ -59,8 +71,7 @@ services:
     ports:
       - "3004:3004"
     env_file:
-      - ./bot/.env
-      - ./.env
+      - ./bot/.env.production
     environment:
       - NODE_ENV=production
     depends_on:
@@ -68,7 +79,6 @@ services:
     networks:
       - production_network
     restart: unless-stopped
-    command: npm start
 
 volumes:
   postgres_data_prod:

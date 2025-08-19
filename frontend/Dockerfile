@@ -7,19 +7,23 @@ RUN echo "registry=https://registry.npmjs.org/" > .npmrc
 
 # Install dependencies only when package.json changes
 COPY package*.json ./
-RUN npm install
+RUN npm ci --only=production
 
 # Copy the rest of the application
 COPY . .
 
-EXPOSE 3002
+# Build the application for production
+RUN npm run build
+
+# Install serve to run the built app
+RUN npm install -g serve
+
+EXPOSE 3000
 
 # Set environment variables
-ENV CHOKIDAR_USEPOLLING=true
-ENV PORT=3002
+ENV NODE_ENV=production
+ENV PORT=3000
 ENV HOST=0.0.0.0
-ENV WDS_SOCKET_HOST=0.0.0.0
-ENV WDS_SOCKET_PORT=3002
 
-# Use development mode with hot reload
-CMD ["npm", "start"] 
+# Serve the built application
+CMD ["serve", "-s", "build", "-l", "3000"] 
