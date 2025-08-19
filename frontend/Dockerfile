@@ -7,7 +7,7 @@ RUN echo "registry=https://registry.npmjs.org/" > .npmrc
 
 # Install dependencies only when package.json changes
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --only=production
 
 # Copy the rest of the application
 COPY . .
