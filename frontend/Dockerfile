@@ -5,12 +5,11 @@ WORKDIR /app
 # Add a .npmrc file to ensure we use the correct registry
 RUN echo "registry=https://registry.npmjs.org/" > .npmrc
 
-# Install dependencies only when package.json changes
-COPY package*.json ./
-RUN npm install --only=production
-
-# Copy the rest of the application
+# Copy all files first
 COPY . .
+
+# Install dependencies
+RUN npm install --only=production
 
 # Build the application for production
 RUN npm run build
