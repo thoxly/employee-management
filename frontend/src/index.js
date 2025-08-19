@@ -7,7 +7,6 @@ import { ThemeProvider as MuiThemeProvider, CssBaseline } from '@mui/material';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { useThemeContext } from './context/ThemeContext';
-import './test-theme'; // Тест темы
 
 // Компонент-обертка для применения темы
 const AppWithTheme = () => {
