@@ -1,0 +1,260 @@
+name: Deploy to Development
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - development
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run linting
+        run: npm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=dev,enable={{is_default_branch}}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Bot image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./bot
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/bot:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to staging server
+        run: |
+          ssh ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} << 'EOF'
+            cd /opt/employee-management-staging
+            git pull origin develop
+            echo "NODE_ENV=development" > .env
+            echo "DB_HOST=${{ secrets.STAGING_DB_HOST }}" >> .env
+            echo "DB_PORT=${{ secrets.STAGING_DB_PORT }}" >> .env
+            echo "DB_NAME=${{ secrets.STAGING_DB_NAME }}" >> .env
+            echo "DB_USER=${{ secrets.STAGING_DB_USER }}" >> .env
+            echo "DB_PASSWORD=${{ secrets.STAGING_DB_PASSWORD }}" >> .env
+            echo "PORT=3003" >> .env
+            echo "JWT_ACCESS_SECRET=${{ secrets.STAGING_JWT_ACCESS_SECRET }}" >> .env
+            echo "JWT_REFRESH_SECRET=${{ secrets.STAGING_JWT_REFRESH_SECRET }}" >> .env
+            echo "BOT_TOKEN=${{ secrets.STAGING_BOT_TOKEN }}" >> .env
+            echo "TELEGRAM_WEBHOOK_URL=${{ secrets.STAGING_TELEGRAM_WEBHOOK_URL }}" >> .env
+            echo "MINI_APP_URL=${{ secrets.STAGING_MINI_APP_URL }}" >> .env
+            echo "FRONTEND_URL=${{ secrets.STAGING_FRONTEND_URL }}" >> .env
+            echo "BACKEND_URL=${{ secrets.STAGING_BACKEND_URL }}" >> .env
+            echo "ALLOWED_ORIGINS=${{ secrets.STAGING_ALLOWED_ORIGINS }}" >> .env
+            echo "REACT_APP_YANDEX_MAP_JS_API=${{ secrets.STAGING_YANDEX_MAP_JS_API }}" >> .env
+            echo "REACT_APP_YANDEX_MAPS_API_KEY=${{ secrets.STAGING_YANDEX_MAPS_API_KEY }}" >> .env
+            echo "REACT_APP_GEOSUGGEST=${{ secrets.STAGING_GEOSUGGEST }}" >> .env
+            echo "AWS_REGION=${{ secrets.STAGING_AWS_REGION }}" >> .env
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}" >> .env
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}" >> .env
+            echo "S3_BUCKET_NAME=${{ secrets.STAGING_S3_BUCKET_NAME }}" >> .env
+            echo "S3_ENDPOINT=${{ secrets.STAGING_S3_ENDPOINT }}" >> .env
+            echo "S3_FORCE_PATH_STYLE=${{ secrets.STAGING_S3_FORCE_PATH_STYLE }}" >> .env
+            echo "CHOKIDAR_USEPOLLING=true" >> .env
+            echo "HOST=0.0.0.0" >> .env
+            docker-compose -f docker-compose.staging.yml pull
+            docker-compose -f docker-compose.staging.yml up -d
+            docker system prune -f
+          EOF
+
+      - name: Health check staging
+        run: |
+          sleep 30
+          curl -f ${{ secrets.STAGING_FRONTEND_URL }}/health || exit 1
+          curl -f ${{ secrets.STAGING_BACKEND_URL }}/health || exit 1
+
+  deploy-development:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: development
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEV_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to development server
+        run: |
+          ssh ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} << 'EOF'
+            cd /opt/employee-management-dev
+            git fetch origin pull/${{ github.event.number }}/head:pr-${{ github.event.number }}
+            git checkout pr-${{ github.event.number }}
+            echo "NODE_ENV=development" > .env
+            echo "DB_HOST=${{ secrets.DEV_DB_HOST }}" >> .env
+            echo "DB_PORT=${{ secrets.DEV_DB_PORT }}" >> .env
+            echo "DB_NAME=${{ secrets.DEV_DB_NAME }}" >> .env
+            echo "DB_USER=${{ secrets.DEV_DB_USER }}" >> .env
+            echo "DB_PASSWORD=${{ secrets.DEV_DB_PASSWORD }}" >> .env
+            echo "PORT=3003" >> .env
+            echo "JWT_ACCESS_SECRET=${{ secrets.DEV_JWT_ACCESS_SECRET }}" >> .env
+            echo "JWT_REFRESH_SECRET=${{ secrets.DEV_JWT_REFRESH_SECRET }}" >> .env
+            echo "BOT_TOKEN=${{ secrets.DEV_BOT_TOKEN }}" >> .env
+            echo "TELEGRAM_WEBHOOK_URL=${{ secrets.DEV_TELEGRAM_WEBHOOK_URL }}" >> .env
+            echo "MINI_APP_URL=${{ secrets.DEV_MINI_APP_URL }}" >> .env
+            echo "FRONTEND_URL=${{ secrets.DEV_FRONTEND_URL }}" >> .env
+            echo "BACKEND_URL=${{ secrets.DEV_BACKEND_URL }}" >> .env
+            echo "ALLOWED_ORIGINS=${{ secrets.DEV_ALLOWED_ORIGINS }}" >> .env
+            echo "REACT_APP_YANDEX_MAP_JS_API=${{ secrets.DEV_YANDEX_MAP_JS_API }}" >> .env
+            echo "REACT_APP_YANDEX_MAPS_API_KEY=${{ secrets.DEV_YANDEX_MAPS_API_KEY }}" >> .env
+            echo "REACT_APP_GEOSUGGEST=${{ secrets.DEV_GEOSUGGEST }}" >> .env
+            echo "AWS_REGION=${{ secrets.DEV_AWS_REGION }}" >> .env
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.DEV_AWS_ACCESS_KEY_ID }}" >> .env
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}" >> .env
+            echo "S3_BUCKET_NAME=${{ secrets.DEV_S3_BUCKET_NAME }}" >> .env
+            echo "S3_ENDPOINT=${{ secrets.DEV_S3_ENDPOINT }}" >> .env
+            echo "S3_FORCE_PATH_STYLE=${{ secrets.DEV_S3_FORCE_PATH_STYLE }}" >> .env
+            echo "CHOKIDAR_USEPOLLING=true" >> .env
+            echo "HOST=0.0.0.0" >> .env
+            docker-compose -f docker-compose.staging.yml pull
+            docker-compose -f docker-compose.staging.yml up -d
+            docker system prune -f
+          EOF
+
+      - name: Health check development
+        run: |
+          sleep 30
+          curl -f ${{ secrets.DEV_FRONTEND_URL }}/health || exit 1
+          curl -f ${{ secrets.DEV_BACKEND_URL }}/health || exit 1
+
+      - name: Comment PR with deployment info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Development deployment completed!
+              
+              **Frontend**: ${{ secrets.DEV_FRONTEND_URL }}
+              **Backend**: ${{ secrets.DEV_BACKEND_URL }}
+              **Image Tag**: ${{ steps.meta.outputs.version }}
+              
+              Deployment will be automatically cleaned up when PR is closed.`
+            })
+
+  cleanup:
+    needs: [deploy-development]
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+
+      - name: Cleanup development deployment
+        run: |
+          ssh ${{ secrets.DEV_USER }}@${{ secrets.DEV_HOST }} << 'EOF'
+            cd /opt/employee-management-dev
+            docker-compose -f docker-compose.staging.yml down
+            git checkout develop
+            git branch -D pr-${{ github.event.number }}
+          EOF

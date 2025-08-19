@@ -1,0 +1,176 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run linting
+        run: npm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Bot image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./bot
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/bot:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.PROD_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to production server
+        run: |
+          ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} << 'EOF'
+            cd /opt/employee-management
+            git pull origin main
+            echo "NODE_ENV=production" > .env
+            echo "DB_HOST=${{ secrets.PROD_DB_HOST }}" >> .env
+            echo "DB_PORT=${{ secrets.PROD_DB_PORT }}" >> .env
+            echo "DB_NAME=${{ secrets.PROD_DB_NAME }}" >> .env
+            echo "DB_USER=${{ secrets.PROD_DB_USER }}" >> .env
+            echo "DB_PASSWORD=${{ secrets.PROD_DB_PASSWORD }}" >> .env
+            echo "PORT=3001" >> .env
+            echo "JWT_ACCESS_SECRET=${{ secrets.PROD_JWT_ACCESS_SECRET }}" >> .env
+            echo "JWT_REFRESH_SECRET=${{ secrets.PROD_JWT_REFRESH_SECRET }}" >> .env
+            echo "BOT_TOKEN=${{ secrets.PROD_BOT_TOKEN }}" >> .env
+            echo "TELEGRAM_WEBHOOK_URL=${{ secrets.PROD_TELEGRAM_WEBHOOK_URL }}" >> .env
+            echo "MINI_APP_URL=${{ secrets.PROD_MINI_APP_URL }}" >> .env
+            echo "FRONTEND_URL=${{ secrets.PROD_FRONTEND_URL }}" >> .env
+            echo "BACKEND_URL=${{ secrets.PROD_BACKEND_URL }}" >> .env
+            echo "ALLOWED_ORIGINS=${{ secrets.PROD_ALLOWED_ORIGINS }}" >> .env
+            echo "REACT_APP_YANDEX_MAP_JS_API=${{ secrets.PROD_YANDEX_MAP_JS_API }}" >> .env
+            echo "REACT_APP_YANDEX_MAPS_API_KEY=${{ secrets.PROD_YANDEX_MAPS_API_KEY }}" >> .env
+            echo "REACT_APP_GEOSUGGEST=${{ secrets.PROD_GEOSUGGEST }}" >> .env
+            echo "AWS_REGION=${{ secrets.PROD_AWS_REGION }}" >> .env
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.PROD_AWS_ACCESS_KEY_ID }}" >> .env
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}" >> .env
+            echo "S3_BUCKET_NAME=${{ secrets.PROD_S3_BUCKET_NAME }}" >> .env
+            echo "S3_ENDPOINT=${{ secrets.PROD_S3_ENDPOINT }}" >> .env
+            echo "S3_FORCE_PATH_STYLE=${{ secrets.PROD_S3_FORCE_PATH_STYLE }}" >> .env
+            echo "HOST=0.0.0.0" >> .env
+            docker-compose -f docker-compose.prod.yml pull
+            docker-compose -f docker-compose.prod.yml up -d
+            docker system prune -f
+          EOF
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl -f ${{ secrets.PROD_FRONTEND_URL }}/health || exit 1
+          curl -f ${{ secrets.PROD_BACKEND_URL }}/health || exit 1
+
+      - name: Notify deployment success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: "#deployments"
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          text: "✅ Production deployment successful!"
+
+      - name: Notify deployment failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: "#deployments"
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          text: "❌ Production deployment failed!"
