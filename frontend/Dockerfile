@@ -11,8 +11,8 @@ COPY . .
 # Install all dependencies (including dev dependencies for build)
 RUN npm install
 
-# Build the application for production
-RUN npm run build
+# Build the application for production with increased memory limit
+RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
 # Remove dev dependencies to reduce image size
 RUN npm prune --production
