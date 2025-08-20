@@ -71,6 +71,21 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/company', companiesRouter);
 app.use('/api/sessions', sessionsRouter);
 
+// Корневой маршрут для /api/
+app.get('/api', (req, res) => {
+    res.json({
+        message: 'Employee Management API',
+        version: '1.0.0',
+        endpoints: {
+            auth: '/api/auth',
+            employees: '/api/employees',
+            tasks: '/api/tasks',
+            company: '/api/company',
+            sessions: '/api/sessions'
+        }
+    });
+});
+
 app.get('/', (req, res) => {
     res.send('Backend is running');
 });
