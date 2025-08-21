@@ -8,8 +8,8 @@ set -e
 echo "🌐 Setting up universal nginx configuration..."
 
 # Проверяем, что мы в правильной директории
-if [ ! -f "nginx.universal.conf" ]; then
-    echo "❌ Error: nginx.universal.conf not found"
+if [ ! -f "nginx.conf" ]; then
+    echo "❌ Error: nginx.conf not found"
     echo "Please run this script from the project root directory"
     exit 1
 fi
@@ -21,8 +21,8 @@ docker-compose -f docker-compose.dev-server.yml down || true
 docker-compose -f docker-compose.staging.yml down || true
 
 # Копируем универсальную конфигурацию
-echo "📋 Copying universal nginx configuration..."
-cp nginx.universal.conf nginx.conf
+echo "📋 Using universal nginx configuration..."
+# nginx.conf уже существует
 
 # Создаем универсальный docker-compose файл
 echo "🐳 Creating universal docker-compose configuration..."
@@ -35,7 +35,7 @@ services:
       - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       - frontend
       - backend
