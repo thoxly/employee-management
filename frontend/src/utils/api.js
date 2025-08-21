@@ -33,6 +33,12 @@ const getApiBaseUrl = () => {
         return API_URLS.tunnel;
     }
     
+    // Если продакшен домен - используем текущий домен для API
+    if (currentDomain.includes('прибыл.рф') || currentDomain.includes('xn--90anknf2e.xn--p1ai')) {
+        console.log('Using production API URL:', currentDomain);
+        return currentDomain;
+    }
+    
     // Fallback на localhost
     console.log('Using fallback localhost API URL');
     return API_URLS.local;

@@ -3,16 +3,14 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./nginx.staging.conf:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
       - backend
       - bot
     networks:
-      - staging_network
+      - dev_network
     restart: unless-stopped
 
   db:
@@ -22,29 +20,37 @@ services:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
     ports:
-      - "5435:5432"
+      - "5434:5432"
     volumes:
-      - postgres_data_staging:/var/lib/postgresql/data
+      - postgres_data_dev:/var/lib/postgresql/data
       - ./backend/init.sql:/docker-entrypoint-initdb.d/1_init.sql
     networks:
-      - staging_network
+      - dev_network
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
     env_file:
       - ./frontend/.env
-      - ./env.staging
+      - ./.env
     environment:
-      - NODE_ENV=staging
-      - REACT_APP_API_URL=https://staging.прибыл.рф/api
-      - REACT_APP_BOT_URL=https://staging.прибыл.рф/bot
+      - HOST=0.0.0.0
+      - PORT=3002
+      - CHOKIDAR_USEPOLLING=true
+      - WDS_SOCKET_HOST=0.0.0.0
+      - WDS_SOCKET_PORT=3002
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - backend
     networks:
-      - staging_network
+      - dev_network
+    command: npm start
     restart: unless-stopped
 
   backend:
@@ -55,14 +61,18 @@ services:
       - "3003:3003"
     env_file:
       - ./backend/.env
-      - ./env.staging
+      - ./.env
     environment:
-      - NODE_ENV=staging
-      - PORT=3003
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
     depends_on:
       - db
     networks:
-      - staging_network
+      - dev_network
+    command: npm run dev
     restart: unless-stopped
 
   bot:
@@ -73,19 +83,23 @@ services:
       - "3004:3004"
     env_file:
       - ./bot/.env
-      - ./env.staging
+      - ./.env
     environment:
-      - NODE_ENV=staging
-      - PORT=3004
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./bot:/app
+      - /app/node_modules
     depends_on:
       - backend
     networks:
-      - staging_network
+      - dev_network
+    command: npm run dev
     restart: unless-stopped
 
 volumes:
-  postgres_data_staging:
+  postgres_data_dev:
 
 networks:
-  staging_network:
+  dev_network:
     driver: bridge 

@@ -1,8 +1,10 @@
-name: Deploy to Production
+name: Deploy to Development
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
+  pull_request:
+    branches: [dev]
 
 jobs:
   test:
@@ -38,40 +40,41 @@ jobs:
           cd backend
           npm run build
 
-  deploy-production:
+  deploy-dev:
     needs: test
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
 
     steps:
-      - name: Deploy to Production Server
+      - name: Deploy to Development Server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 89.111.169.243
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            echo "🚀 Starting deployment to production environment..."
+            echo "🚀 Starting deployment to development environment..."
 
             # Переходим в директорию проекта
             cd /var/www/prod
 
             # Останавливаем текущие контейнеры
             echo "🛑 Stopping current containers..."
-            docker-compose down || true
+            docker-compose -f docker-compose.dev-server.yml down || true
 
             # Получаем последние изменения
-            echo "📥 Pulling latest changes from main branch..."
+            echo "📥 Pulling latest changes from dev branch..."
             git fetch origin
-            git reset --hard origin/main
+            git reset --hard origin/dev
 
             # Копируем переменные окружения
             echo "🔧 Setting up environment variables..."
-            cp env.production .env.prod || true
+            cp env.development-server .env.dev || true
 
             # Собираем и запускаем контейнеры
             echo "🔨 Building and starting containers..."
-            docker-compose build --no-cache
-            docker-compose up -d
+            docker-compose -f docker-compose.dev-server.yml build --no-cache
+            docker-compose -f docker-compose.dev-server.yml up -d
 
             # Ждем запуска сервисов
             echo "⏳ Waiting for services to start..."
@@ -79,17 +82,17 @@ jobs:
 
             # Проверяем статус
             echo "🔍 Checking deployment status..."
-            docker-compose ps
+            docker-compose -f docker-compose.dev-server.yml ps
 
             # Проверяем доступность
             echo "🌐 Testing application availability..."
-            curl -f https://прибыл.рф/health || echo "Health check failed"
+            curl -f http://localhost/health || echo "Health check failed"
 
-            echo "✅ Production deployment completed!"
-            echo "🌐 Application available at: https://прибыл.рф"
+            echo "✅ Development deployment completed!"
+            echo "🌐 Application available at: https://dev.прибыл.рф"
 
   notify:
-    needs: [deploy-production]
+    needs: [deploy-dev]
     runs-on: ubuntu-latest
     if: always()
 
@@ -100,13 +103,13 @@ jobs:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           message: |
-            🚀 **Production Deployment**
+            🚀 **Development Deployment**
 
-            **Status**: ${{ needs.deploy-production.result == 'success' && '✅ Success' || '❌ Failed' }}
-            **Branch**: main
+            **Status**: ${{ needs.deploy-dev.result == 'success' && '✅ Success' || '❌ Failed' }}
+            **Branch**: dev
             **Commit**: ${{ github.sha }}
             **Author**: ${{ github.actor }}
 
-            **URL**: https://прибыл.рф
+            **URL**: https://dev.прибыл.рф
 
-            ${{ needs.deploy-production.result == 'success' && '🎉 Production deployment successful!' || '⚠️ Production deployment failed. Check logs immediately!' }}
+            ${{ needs.deploy-dev.result == 'success' && '🎉 Deployment successful!' || '⚠️ Deployment failed. Check logs for details.' }}
